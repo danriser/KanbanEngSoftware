@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -------------------------------------
+// GESTÃO DE IDENTIDADE E ACESSO
+// -------------------------------------
+
+model User {
+  id            String          @id @default(uuid())
+  name          String
+  email         String          @unique
+  passwordHash  String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  
+  projects      ProjectMember[]
+  assignedCards Card[]
+}
+
+// -------------------------------------
+// ESTRUTURA DO PROJETO E QUADROS
+// -------------------------------------
+
+model Project {
+  id          String          @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  
+  members     ProjectMember[]
+  boards      Board[]
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  userId    String
+  projectId String
+  role      String   @default("MEMBER") // Pode ser ADMIN ou MEMBER
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId]) // Um usuário só pode entrar em um projeto uma vez
+}
+
+model Board {
+  id        String     @id @default(uuid())
+  name      String
+  projectId String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columns   Column[]
+  swimlanes Swimlane[]
+}
+
+// -------------------------------------
+// LAYOUT E LIMITES DE FLUXO (WIP)
+// -------------------------------------
+
+model Column {
+  id        String   @id @default(uuid())
+  name      String
+  order     Int      // Controla a ordem visual (ex: 1=A FAZER, 2=FAZENDO)
+  wipLimit  Int?     // O limite opcional de Work In Progress
+  boardId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards     Card[]
+}
+
+model Swimlane {
+  id        String   @id @default(uuid())
+  name      String
+  order     Int
+  boardId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards     Card[]
+}
+
+// -------------------------------------
+// GESTÃO OPERACIONAL E MÉTRICAS
+// -------------------------------------
+
+model Card {
+  id          String         @id @default(uuid())
+  name        String
+  description String?
+  priority    String         @default("MEDIUM")
+  dueDate     DateTime?
+  columnId    String
+  swimlaneId  String?
+  assigneeId  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  column      Column         @relation(fields: [columnId], references: [id])
+  swimlane    Swimlane?      @relation(fields: [swimlaneId], references: [id])
+  assignee    User?          @relation(fields: [assigneeId], references: [id])
+  movements   CardMovement[]
+}
+
+model CardMovement {
+  id           String   @id @default(uuid())
+  cardId       String
+  fromColumnId String?  // Nulo se for a primeira coluna (criação do cartão)
+  toColumnId   String
+  timestamp    DateTime @default(now()) // Base para calcular Cycle Time e Lead Time
+
+  card         Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+}
