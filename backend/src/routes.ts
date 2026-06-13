@@ -392,4 +392,79 @@ router.get('/boards/:id', authMiddleware, async (req: Request, res: Response): P
 });
 
 
+// ==========================================
+// 3. MOVIMENTAÇÃO DE CARTÕES (PATCH)
+// ==========================================
+const moveCardParamSchema = z.object({
+  id: z.string().uuid('ID do cartão inválido'),
+});
+
+const moveCardBodySchema = z.object({
+  columnId: z.string().uuid('ID da nova coluna é obrigatório'),
+});
+
+router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    
+    // Extrai o ID do cartão da URL e o ID da nova coluna do corpo (body)
+    const { id: cardId } = moveCardParamSchema.parse(req.params);
+    const { columnId: newColumnId } = moveCardBodySchema.parse(req.body);
+
+    // 1. Mapeamento de Terreno: Encontra o cartão atual e a qual projeto ele pertence
+    const card = await prisma.card.findUnique({
+      where: { id: cardId },
+      include: {
+        column: {
+          include: { board: true }
+        }
+      }
+    });
+
+    if (!card) {
+      res.status(404).json({ error: 'Cartão não localizado no perímetro.' });
+      return;
+    }
+
+    const projectId = card.column.board.projectId;
+
+    // 2. Defesa Preventiva: O usuário faz parte deste projeto?
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado neste projeto.' });
+      return;
+    }
+
+    // 3. Defesa Estrutural: A nova coluna pertence ao mesmo quadro?
+    const targetColumn = await prisma.column.findUnique({ where: { id: newColumnId } });
+    if (!targetColumn || targetColumn.boardId !== card.column.boardId) {
+      res.status(400).json({ error: 'Operação inválida: A coluna de destino pertence a outro quadro.' });
+      return;
+    }
+
+    // 4. Execução: Atualiza apenas o endereço (columnId) do cartão
+    const updatedCard = await prisma.card.update({
+      where: { id: cardId },
+      data: { columnId: newColumnId }
+    });
+
+    res.status(200).json({
+      message: 'Cartão reposicionado com sucesso.',
+      card: updatedCard
+    });
+
+  } catch (error) {
+    console.error('[Erro na Movimentação do Cartão]:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues });
+      return;
+    }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
 export default router; 
