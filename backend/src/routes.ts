@@ -403,6 +403,106 @@ const moveCardBodySchema = z.object({
   columnId: z.string().uuid('ID da nova coluna é obrigatório'),
 });
 
+
+// Schemas de Validação para Atualização e Remoção
+const updateCardBodySchema = z.object({
+  name: z.string().min(1, 'O nome não pode ser vazio').optional(),
+  description: z.string().optional(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional(),
+});
+
+const cardParamSchema = z.object({
+  id: z.string().uuid('ID do cartão inválido'),
+});
+
+// 1. EDIÇÃO DE CONTEÚDO DO CARTÃO (PUT)
+router.put('/cards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: cardId } = cardParamSchema.parse(req.params);
+    const updateData = updateCardBodySchema.parse(req.body);
+
+    // Mapeamento para validação de perímetro
+    const card = await prisma.card.findUnique({
+      where: { id: cardId },
+      include: { column: { include: { board: true } } }
+    });
+
+    if (!card) {
+      res.status(404).json({ error: 'Cartão não localizado.' });
+      return;
+    }
+
+    // Defesa Preventiva
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId: card.column.board.projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Utilizador não autorizado.' });
+      return;
+    }
+
+    // Tratamento específico para o campo description (evitar conflito undefined vs null)
+    // Constrói o payload de atualização cirurgicamente, ignorando o que for undefined
+    const dataToUpdate: Record<string, any> = {};
+
+    if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
+    if (updateData.priority !== undefined) dataToUpdate.priority = updateData.priority;
+    if (updateData.description !== undefined) dataToUpdate.description = updateData.description;
+
+    const updatedCard = await prisma.card.update({
+      where: { id: cardId },
+      data: dataToUpdate,
+    });
+
+    res.status(200).json({ message: 'Cartão atualizado com sucesso.', card: updatedCard });
+  } catch (error) {
+    console.error('[Erro na Atualização do Cartão]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+// 2. REMOÇÃO DEFINITIVA DO CARTÃO (DELETE)
+router.delete('/cards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: cardId } = cardParamSchema.parse(req.params);
+
+    const card = await prisma.card.findUnique({
+      where: { id: cardId },
+      include: { column: { include: { board: true } } }
+    });
+
+    if (!card) {
+      res.status(404).json({ error: 'Cartão não localizado.' });
+      return;
+    }
+
+    // Defesa Preventiva
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId: card.column.board.projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Utilizador não autorizado.' });
+      return;
+    }
+
+    // Execução da exclusão no banco
+    await prisma.card.delete({
+      where: { id: cardId }
+    });
+
+    res.status(200).json({ message: 'Cartão removido com sucesso do painel.' });
+  } catch (error) {
+    console.error('[Erro na Remoção do Cartão]:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
 router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.userId as string;
