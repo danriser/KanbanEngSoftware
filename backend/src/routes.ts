@@ -10,18 +10,14 @@ import { authMiddleware } from './middlewares/authMiddleware.js';
 
 const router = Router();
 
-// 1. Configura o pool de conexão nativo do Postgres apontando para o seu .env
 const pool = new pg.Pool({ 
   connectionString: process.env.DATABASE_URL 
 });
 
-// 2. Cria o adaptador do Prisma
 const adapter = new PrismaPg(pool);
 
-// 3. Injeta o adaptador no Prisma Client (A exigência da v7)
 const prisma = new PrismaClient({ adapter });
 
-// Validação estrita de entrada
 const createUserSchema = z.object({
   name: z.string().min(2, 'O nome precisa ter pelo menos 2 caracteres'),
   email: z.string().email('Formato de e-mail inválido'),
@@ -81,25 +77,20 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
-    // 1. Busca o usuário pelo e-mail
     const user = await prisma.user.findUnique({ where: { email } });
     
-    // 2. Se o usuário não existir, aborta com erro genérico
     if (!user) {
       res.status(401).json({ error: 'Credenciais inválidas.' });
       return;
     }
 
-    // 3. Compara a senha enviada em plain text com o Hash do banco
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     
-    // 4. Se a senha não bater, aborta com o MESMO erro genérico
     if (!isValidPassword) {
       res.status(401).json({ error: 'Credenciais inválidas.' });
       return;
     }
 
-    // 5. Autenticação validada: Gera o Token de acesso
     const secret = process.env.JWT_SECRET;
     if (!secret) {
       throw new Error("JWT_SECRET não está configurado no ambiente.");
@@ -109,7 +100,6 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       expiresIn: '7d', // O token expira em 7 dias
     });
 
-    // 6. Retorna os dados do usuário com o token anexado
     res.status(200).json({
       user: {
         id: user.id,
@@ -129,7 +119,82 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// Rota blindada para teste de perímetro
+
+
+
+
+// Validação estrita para o escopo do Projeto
+const createProjectSchema = z.object({
+  name: z.string().min(2, 'O nome do projeto precisa ter pelo menos 2 caracteres'),
+  description: z.string().optional(), // A descrição não é obrigatória
+});
+
+// Criação de Projeto (Rota Protegida)
+router.post('/projects', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    // O TypeScript exige a afirmação de que o userId existe, embora o middleware já garanta isso
+    const userId = req.userId as string;
+
+    const { name, description } = createProjectSchema.parse(req.body);
+
+    const newProject = await prisma.project.create({
+      data: {
+        name,
+        description: description ?? null, // <-- Faz a conversão automática de undefined para null
+        members: {
+          create: {
+            user: { connect: { id: userId } }
+          }
+        }
+      }
+    });
+
+    res.status(201).json({
+      message: 'Projeto operacional iniciado com sucesso.',
+      project: newProject
+    });
+
+  } catch (error) {
+    console.error('[Erro na Criação do Projeto]:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues });
+      return;
+    }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
+router.get('/projects', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+
+    // Consulta relacional: busca projetos que contenham o usuário na tabela de membros
+    const projects = await prisma.project.findMany({
+      where: {
+        members: {
+          some: {
+            userId: userId
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc' // Entrega os projetos mais recentes primeiro
+      }
+    });
+
+    res.status(200).json({
+      status: 'sucesso',
+      count: projects.length,
+      projects
+    });
+
+  } catch (error) {
+    console.error('[Erro na Listagem de Projetos]:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
 router.get('/me', authMiddleware, (req: Request, res: Response) => {
   res.status(200).json({
     status: 'sucesso',
