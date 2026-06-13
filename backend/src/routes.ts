@@ -24,6 +24,81 @@ const createUserSchema = z.object({
   password: z.string().min(6, 'A senha precisa ter pelo menos 6 caracteres'),
 });
 
+
+// ==========================================
+// 1. QUADROS (BOARDS)
+// ==========================================
+const createBoardSchema = z.object({
+  name: z.string().min(1, 'O nome do quadro é obrigatório'),
+  projectId: z.string().uuid('ID do projeto é obrigatório'),
+});
+
+router.post('/boards', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { name, projectId } = createBoardSchema.parse(req.body);
+
+    // Defesa de Perímetro
+    const isMember = await prisma.projectMember.findFirst({ where: { projectId, userId } });
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Você não pertence a este projeto.' });
+      return;
+    }
+
+    const newBoard = await prisma.board.create({
+      data: { name, projectId },
+    });
+
+    res.status(201).json({ message: 'Quadro operacional criado.', board: newBoard });
+  } catch (error) {
+    console.error('[Erro na Criação do Quadro]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+// ==========================================
+// 2. COLUNAS (COLUMNS)
+// ==========================================
+const createColumnSchema = z.object({
+  name: z.string().min(1, 'O nome da coluna é obrigatório'),
+  boardId: z.string().uuid('ID do quadro é obrigatório'),
+  order: z.number().int('A posição (ordem) da coluna é obrigatória'), // Exigência de ordenação
+});
+
+router.post('/columns', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    
+    // Extraindo o order do corpo da requisição
+    const { name, boardId, order } = createColumnSchema.parse(req.body);
+
+    const board = await prisma.board.findUnique({ where: { id: boardId } });
+    if (!board) {
+      res.status(404).json({ error: 'Quadro não encontrado.' });
+      return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({ where: { projectId: board.projectId, userId } });
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Você não pertence a este projeto.' });
+      return;
+    }
+
+    // Injetando o order na gravação do banco
+    const newColumn = await prisma.column.create({
+      data: { name, boardId, order },
+    });
+
+    res.status(201).json({ message: 'Coluna criada com sucesso.', column: newColumn });
+  } catch (error) {
+    console.error('[Erro na Criação da Coluna]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
 router.post('/users', async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, email, password } = createUserSchema.parse(req.body);
@@ -191,6 +266,58 @@ router.get('/projects', authMiddleware, async (req: Request, res: Response): Pro
 
   } catch (error) {
     console.error('[Erro na Listagem de Projetos]:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+const createCardSchema = z.object({
+  name: z.string().min(1, 'O nome do cartão é obrigatório'),
+  description: z.string().optional(),
+  projectId: z.string().uuid('ID do projeto é obrigatório para validação de segurança'),
+  columnId: z.string().uuid('ID da coluna é obrigatório para posicionar o cartão'),
+});
+
+// Criação de Cartão (Rota Protegida com Verificação de Perímetro)
+router.post('/cards', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    
+    // Extraímos o 'name' em vez de 'title', e adicionamos o 'columnId'
+    const { name, description, projectId, columnId } = createCardSchema.parse(req.body);
+
+    // 1. Defesa Preventiva: Verifica se o usuário tem autorização no projeto como um todo
+    const isMember = await prisma.projectMember.findFirst({
+      where: {
+        projectId: projectId,
+        userId: userId,
+      },
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Você não tem permissão para alterar este projeto.' });
+      return;
+    }
+
+    // 2. Persistência: Grava o cartão usando as chaves exatas do seu schema.prisma
+    const newCard = await prisma.card.create({
+      data: {
+        name, 
+        description: description ?? null,
+        columnId, // A chave estrangeira real que a sua tabela exige
+      },
+    });
+
+    res.status(201).json({
+      message: 'Cartão operacional criado com sucesso.',
+      card: newCard,
+    });
+
+  } catch (error) {
+    console.error('[Erro na Criação do Cartão]:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues });
+      return;
+    }
     res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 });
