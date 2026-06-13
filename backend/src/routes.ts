@@ -506,19 +506,13 @@ router.delete('/cards/:id', authMiddleware, async (req: Request, res: Response):
 router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.userId as string;
-    
-    // Extrai o ID do cartão da URL e o ID da nova coluna do corpo (body)
     const { id: cardId } = moveCardParamSchema.parse(req.params);
     const { columnId: newColumnId } = moveCardBodySchema.parse(req.body);
 
-    // 1. Mapeamento de Terreno: Encontra o cartão atual e a qual projeto ele pertence
+    // 1. Mapeamento de Terreno (Origem)
     const card = await prisma.card.findUnique({
       where: { id: cardId },
-      include: {
-        column: {
-          include: { board: true }
-        }
-      }
+      include: { column: { include: { board: true } } }
     });
 
     if (!card) {
@@ -527,8 +521,14 @@ router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Respon
     }
 
     const projectId = card.column.board.projectId;
+    const oldColumnId = card.columnId;
 
-    // 2. Defesa Preventiva: O usuário faz parte deste projeto?
+    if (oldColumnId === newColumnId) {
+      res.status(200).json({ message: 'O cartão já está posicionado nesta coluna.', card });
+      return;
+    }
+
+    // 2. Defesa Preventiva: Pertencimento ao projeto
     const isMember = await prisma.projectMember.findFirst({
       where: { projectId, userId }
     });
@@ -538,22 +538,48 @@ router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Respon
       return;
     }
 
-    // 3. Defesa Estrutural: A nova coluna pertence ao mesmo quadro?
-    const targetColumn = await prisma.column.findUnique({ where: { id: newColumnId } });
+    // 3. Defesa Estrutural e Inspeção do WIP Limit (RFC-02)
+    const targetColumn = await prisma.column.findUnique({ 
+      where: { id: newColumnId },
+      include: { cards: true } // Carrega os cartões para aferição da carga atual
+    });
+
     if (!targetColumn || targetColumn.boardId !== card.column.boardId) {
       res.status(400).json({ error: 'Operação inválida: A coluna de destino pertence a outro quadro.' });
       return;
     }
 
-    // 4. Execução: Atualiza apenas o endereço (columnId) do cartão
-    const updatedCard = await prisma.card.update({
-      where: { id: cardId },
-      data: { columnId: newColumnId }
-    });
+    if (targetColumn.wipLimit !== null && targetColumn.cards.length >= targetColumn.wipLimit) {
+      res.status(400).json({ 
+        error: `Movimentação bloqueada: A coluna atingiu o limite de trabalho em progresso (WIP Limit: ${targetColumn.wipLimit}).` 
+      });
+      return;
+    }
+
+    // 4. Execução Relacional: Transação ACID (RFC-01, RFC-06, RNF-CON-01)
+    // O Prisma garante que se uma falhar, a outra sofre rollback automático.
+    const [updatedCard, movementLog] = await prisma.$transaction([
+      
+      // Passo A: Reposiciona o cartão
+      prisma.card.update({
+        where: { id: cardId },
+        data: { columnId: newColumnId }
+      }),
+
+      // Passo B: Crava o log de auditoria no histórico
+      prisma.cardMovement.create({
+        data: {
+          cardId: cardId,
+          fromColumnId: oldColumnId, // Adaptar se o nome no schema.prisma for diferente
+          toColumnId: newColumnId,   // Adaptar se o nome no schema.prisma for diferente
+        }
+      })
+    ]);
 
     res.status(200).json({
-      message: 'Cartão reposicionado com sucesso.',
-      card: updatedCard
+      message: 'Cartão reposicionado e auditoria registrada com sucesso.',
+      card: updatedCard,
+      log: movementLog
     });
 
   } catch (error) {
