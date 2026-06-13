@@ -401,6 +401,7 @@ const moveCardParamSchema = z.object({
 
 const moveCardBodySchema = z.object({
   columnId: z.string().uuid('ID da nova coluna é obrigatório'),
+  swimlaneId: z.string().uuid('ID da raia inválido').nullable().optional(),
 });
 
 
@@ -507,87 +508,184 @@ router.patch('/cards/:id/move', authMiddleware, async (req: Request, res: Respon
   try {
     const userId = req.userId as string;
     const { id: cardId } = moveCardParamSchema.parse(req.params);
-    const { columnId: newColumnId } = moveCardBodySchema.parse(req.body);
+    const { columnId: newColumnId, swimlaneId: newSwimlaneId } = moveCardBodySchema.parse(req.body);
 
-    // 1. Mapeamento de Terreno (Origem)
+    // 1. Mapeamento de Terreno
     const card = await prisma.card.findUnique({
       where: { id: cardId },
       include: { column: { include: { board: true } } }
     });
 
     if (!card) {
-      res.status(404).json({ error: 'Cartão não localizado no perímetro.' });
-      return;
+      res.status(404).json({ error: 'Cartão não localizado no perímetro.' }); return;
     }
 
     const projectId = card.column.board.projectId;
     const oldColumnId = card.columnId;
 
-    if (oldColumnId === newColumnId) {
-      res.status(200).json({ message: 'O cartão já está posicionado nesta coluna.', card });
-      return;
-    }
-
     // 2. Defesa Preventiva: Pertencimento ao projeto
-    const isMember = await prisma.projectMember.findFirst({
-      where: { projectId, userId }
-    });
-
+    const isMember = await prisma.projectMember.findFirst({ where: { projectId, userId } });
     if (!isMember) {
-      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado neste projeto.' });
-      return;
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado neste projeto.' }); return;
     }
 
-    // 3. Defesa Estrutural e Inspeção do WIP Limit (RFC-02)
+    // 3. Defesa Estrutural: Validação de Coluna e WIP Limit
     const targetColumn = await prisma.column.findUnique({ 
-      where: { id: newColumnId },
-      include: { cards: true } // Carrega os cartões para aferição da carga atual
+      where: { id: newColumnId }, include: { cards: true } 
     });
 
     if (!targetColumn || targetColumn.boardId !== card.column.boardId) {
-      res.status(400).json({ error: 'Operação inválida: A coluna de destino pertence a outro quadro.' });
-      return;
+      res.status(400).json({ error: 'Operação inválida: A coluna de destino pertence a outro quadro.' }); return;
     }
 
-    if (targetColumn.wipLimit !== null && targetColumn.cards.length >= targetColumn.wipLimit) {
+    if (oldColumnId !== newColumnId && targetColumn.wipLimit !== null && targetColumn.cards.length >= targetColumn.wipLimit) {
       res.status(400).json({ 
         error: `Movimentação bloqueada: A coluna atingiu o limite de trabalho em progresso (WIP Limit: ${targetColumn.wipLimit}).` 
       });
       return;
     }
 
-    // 4. Execução Relacional: Transação ACID (RFC-01, RFC-06, RNF-CON-01)
-    // O Prisma garante que se uma falhar, a outra sofre rollback automático.
+    // 4. Defesa Estrutural Adicional: Validação da Raia (Swimlane)
+    if (newSwimlaneId) {
+      const targetSwimlane = await prisma.swimlane.findUnique({ where: { id: newSwimlaneId } });
+      if (!targetSwimlane || targetSwimlane.boardId !== card.column.boardId) {
+        res.status(400).json({ error: 'Operação inválida: A raia de destino pertence a outro quadro.' }); return;
+      }
+    }
+
+    // 5. Execução Relacional: Transação ACID
     const [updatedCard, movementLog] = await prisma.$transaction([
-      
-      // Passo A: Reposiciona o cartão
       prisma.card.update({
         where: { id: cardId },
-        data: { columnId: newColumnId }
+        data: { 
+          columnId: newColumnId,
+          ...(newSwimlaneId !== undefined && { swimlaneId: newSwimlaneId }) // Injeta a raia se ela foi enviada
+        }
       }),
-
-      // Passo B: Crava o log de auditoria no histórico
       prisma.cardMovement.create({
         data: {
           cardId: cardId,
-          fromColumnId: oldColumnId, // Adaptar se o nome no schema.prisma for diferente
-          toColumnId: newColumnId,   // Adaptar se o nome no schema.prisma for diferente
+          fromColumnId: oldColumnId, 
+          toColumnId: newColumnId    
         }
       })
     ]);
 
-    res.status(200).json({
-      message: 'Cartão reposicionado e auditoria registrada com sucesso.',
-      card: updatedCard,
-      log: movementLog
+    res.status(200).json({ message: 'Cartão reposicionado e auditoria registrada com sucesso.', card: updatedCard, log: movementLog });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
+// ==========================================
+// 4. GESTÃO DE RAIAS (SWIMLANES)
+// ==========================================
+
+// --- SCHEMAS DE VALIDAÇÃO ---
+const createSwimlaneSchema = z.object({
+  name: z.string().min(1, 'O nome da raia é obrigatório'),
+  boardId: z.string().uuid('ID do quadro é obrigatório'),
+  order: z.number().int('A posição (ordem) da raia é obrigatória'), // Exigência de ordenação
+});
+
+const swimlaneParamSchema = z.object({
+  id: z.string().uuid('ID da raia inválido'),
+});
+
+const updateSwimlaneSchema = z.object({
+  name: z.string().min(1, 'O nome da raia não pode ser vazio'),
+});
+
+// --- US-07: CRIAR RAIA (POST) ---
+router.post('/swimlanes', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { name, boardId, order } = createSwimlaneSchema.parse(req.body);
+
+    const board = await prisma.board.findUnique({ where: { id: boardId } });
+    if (!board) {
+      res.status(404).json({ error: 'Quadro não localizado.' }); return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({ where: { projectId: board.projectId, userId } });
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado.' }); return;
+    }
+
+    const newSwimlane = await prisma.swimlane.create({
+      data: { name, boardId, order }
     });
 
+    res.status(201).json({ message: 'Raia estrutural criada com sucesso.', swimlane: newSwimlane });
   } catch (error) {
-    console.error('[Erro na Movimentação do Cartão]:', error);
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ error: error.issues });
-      return;
+    console.error('[Erro na Criação da Raia]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+// --- US-09: ATUALIZAR RAIA (PUT) ---
+router.put('/swimlanes/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: swimlaneId } = swimlaneParamSchema.parse(req.params);
+    const { name } = updateSwimlaneSchema.parse(req.body);
+
+    const swimlane = await prisma.swimlane.findUnique({
+      where: { id: swimlaneId }, include: { board: true }
+    });
+
+    if (!swimlane) {
+      res.status(404).json({ error: 'Raia não localizada no perímetro.' }); return;
     }
+
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId: swimlane.board.projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado.' }); return;
+    }
+
+    const updatedSwimlane = await prisma.swimlane.update({
+      where: { id: swimlaneId }, data: { name }
+    });
+
+    res.status(200).json({ message: 'Raia atualizada com sucesso.', swimlane: updatedSwimlane });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+// --- US-10: EXCLUIR RAIA (DELETE) ---
+router.delete('/swimlanes/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: swimlaneId } = swimlaneParamSchema.parse(req.params);
+
+    const swimlane = await prisma.swimlane.findUnique({
+      where: { id: swimlaneId }, include: { board: true }
+    });
+
+    if (!swimlane) {
+      res.status(404).json({ error: 'Raia não localizada no perímetro.' }); return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId: swimlane.board.projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado.' }); return;
+    }
+
+    await prisma.swimlane.delete({ where: { id: swimlaneId } });
+
+    res.status(200).json({ message: 'Raia removida com sucesso da estrutura do quadro.' });
+  } catch (error) {
     res.status(500).json({ error: 'Erro interno no servidor.' });
   }
 });
