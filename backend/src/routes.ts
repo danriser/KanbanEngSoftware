@@ -330,4 +330,66 @@ router.get('/me', authMiddleware, (req: Request, res: Response) => {
   });
 });
 
+
+// Validação do parâmetro de URL
+const boardParamSchema = z.object({
+  id: z.string().uuid('ID do quadro inválido'),
+});
+
+// Super Rota de Leitura: Retorna o Quadro com Colunas e Cartões aninhados
+router.get('/boards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: boardId } = boardParamSchema.parse(req.params);
+
+    // Consulta Avançada: Une segurança e agregação de dados em um único movimento
+    const board = await prisma.board.findFirst({
+      where: {
+        id: boardId,
+        project: {
+          members: {
+            some: {
+              userId: userId
+            }
+          }
+        }
+      },
+      include: {
+        columns: {
+          orderBy: {
+            order: 'asc' // Garante o posicionamento correto na tela (Backlog -> Em Andamento -> Concluído)
+          },
+          include: {
+            cards: {
+              orderBy: {
+                createdAt: 'asc' // Organiza os cartões dos mais antigos aos mais recentes dentro da coluna
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Se a consulta retornar null, significa que o quadro não existe OU o utilizador não tem acesso
+    if (!board) {
+      res.status(403).json({ error: 'Acesso negado ou recurso não encontrado.' });
+      return;
+    }
+
+    res.status(200).json({
+      status: 'sucesso',
+      board
+    });
+
+  } catch (error) {
+    console.error('[Erro na Super Rota de Leitura]:', error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues });
+      return;
+    }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
 export default router; 
