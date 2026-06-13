@@ -691,4 +691,107 @@ router.delete('/swimlanes/:id', authMiddleware, async (req: Request, res: Respon
 });
 
 
+// ==========================================
+// 5. MOTOR ANALÍTICO E MÉTRICAS (GET)
+// ==========================================
+const metricsParamSchema = z.object({
+  id: z.string().uuid('ID do quadro inválido'),
+});
+
+router.get('/boards/:id/metrics', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: boardId } = metricsParamSchema.parse(req.params);
+
+    // 1. Defesa Preventiva e Mapeamento
+    const board = await prisma.board.findUnique({
+      where: { id: boardId },
+      include: {
+        columns: { orderBy: { order: 'asc' } }
+      }
+    });
+
+    if (!board) {
+      res.status(404).json({ error: 'Quadro não localizado.' }); return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({
+      where: { projectId: board.projectId, userId }
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Perfil não autorizado.' }); return;
+    }
+
+// 2. Identificação das Colunas-Chave
+    // Assumimos que a primeira coluna é o Backlog, a segunda é o Início do Trabalho e a última é o Concluído
+    const columns = board.columns;
+    if (columns.length < 3) {
+      res.status(400).json({ error: 'O quadro precisa de pelo menos 3 colunas para gerar métricas precisas.' }); return;
+    }
+
+    // Asserção estrita (!) para garantir ao compilador que os índices existem
+    const doingColumnId = columns[1]!.id; 
+    const doneColumnId = columns[columns.length - 1]!.id;
+
+    // 3. Extração Otimizada (Evitando N+1 queries)
+    const boardCards = await prisma.card.findMany({
+      where: { column: { boardId: boardId } },
+      select: { id: true, createdAt: true }
+    });
+    
+    const cardIds = boardCards.map(c => c.id);
+
+    const allMovements = await prisma.cardMovement.findMany({
+      where: { cardId: { in: cardIds } },
+      orderBy: { timestamp: 'asc' } // Do mais antigo para o mais novo
+    });
+
+    // 4. O Motor Matemático
+    let totalCycleTimeMs = 0;
+    let totalLeadTimeMs = 0;
+    let completedCardsCount = 0;
+
+    for (const card of boardCards) {
+      const cardLogs = allMovements.filter(m => m.cardId === card.id);
+      
+      // Encontra a última vez que o cartão entrou na coluna final
+      const doneLog = cardLogs.filter(m => m.toColumnId === doneColumnId).pop(); 
+
+      if (doneLog) {
+        completedCardsCount++;
+        const doneTime = doneLog.timestamp.getTime();
+
+        // Lead Time: Desde a criação física do cartão até a conclusão
+        totalLeadTimeMs += (doneTime - card.createdAt.getTime());
+
+        // Cycle Time: Desde a entrada em "Fazendo" até a conclusão
+        const doingLog = cardLogs.find(m => m.toColumnId === doingColumnId);
+        const doingTime = doingLog ? doingLog.timestamp.getTime() : card.createdAt.getTime();
+
+        totalCycleTimeMs += (doneTime - doingTime);
+      }
+    }
+
+    // 5. Consolidação e Formatação (Convertendo milissegundos para dias)
+    const msInDay = 1000 * 60 * 60 * 24;
+    const avgLeadTime = completedCardsCount > 0 ? (totalLeadTimeMs / completedCardsCount) / msInDay : 0;
+    const avgCycleTime = completedCardsCount > 0 ? (totalCycleTimeMs / completedCardsCount) / msInDay : 0;
+
+    res.status(200).json({
+      message: 'Dashboard analítico gerado com sucesso.',
+      metrics: {
+        throughput: completedCardsCount,
+        leadTimeDays: parseFloat(avgLeadTime.toFixed(2)),
+        cycleTimeDays: parseFloat(avgCycleTime.toFixed(2))
+      }
+    });
+
+  } catch (error) {
+    console.error('[Erro no Motor Analítico]:', error);
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+
 export default router; 
