@@ -64,6 +64,7 @@ const createColumnSchema = z.object({
   name: z.string().min(1, 'O nome da coluna é obrigatório'),
   boardId: z.string().uuid('ID do quadro é obrigatório'),
   order: z.number().int('A posição (ordem) da coluna é obrigatória'), // Exigência de ordenação
+  wipLimit: z.number().int().nullable().optional(), // Limite de trabalho em progresso, opcional e pode ser nulo
 });
 
 router.post('/columns', authMiddleware, async (req: Request, res: Response): Promise<void> => {
@@ -71,7 +72,7 @@ router.post('/columns', authMiddleware, async (req: Request, res: Response): Pro
     const userId = req.userId as string;
     
     // Extraindo o order do corpo da requisição
-    const { name, boardId, order } = createColumnSchema.parse(req.body);
+    const { name, boardId, order, wipLimit } = createColumnSchema.parse(req.body);
 
     const board = await prisma.board.findUnique({ where: { id: boardId } });
     if (!board) {
@@ -87,7 +88,7 @@ router.post('/columns', authMiddleware, async (req: Request, res: Response): Pro
 
     // Injetando o order na gravação do banco
     const newColumn = await prisma.column.create({
-      data: { name, boardId, order },
+      data: { name, boardId, order, wipLimit: wipLimit ?? null } // Converte undefined para null, se necessário
     });
 
     res.status(201).json({ message: 'Coluna criada com sucesso.', column: newColumn });
