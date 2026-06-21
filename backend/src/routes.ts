@@ -337,6 +337,28 @@ const boardParamSchema = z.object({
 });
 
 
+router.put('/projects/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    // 🚨 A CORREÇÃO ESTÁ AQUI: Forçamos o TypeScript a assumir que é uma string
+    const id = req.params.id as string;
+    
+    const { name, description } = req.body; 
+
+    const project = await prisma.project.update({
+      where: { id: id }, // Passamos a variável limpa para o Prisma
+      data: { 
+        name, 
+        description 
+      }
+    });
+
+    res.status(200).json({ status: 'sucesso', project });
+  } catch (error) {
+    console.error('[Erro na Atualização do Projeto]:', error);
+    res.status(500).json({ error: 'Erro interno ao atualizar o projeto.' });
+  }
+});
+
 router.delete('/boards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.userId as string;
