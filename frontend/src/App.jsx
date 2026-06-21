@@ -781,11 +781,13 @@ function BoardPage({ board: initialBoard, project, onBack }) {
   const [boardName, setBoardName] = useState("");   
  
 
-  // Criação de colunas
+  // Criação / edição de colunas
   const [showColModal, setShowColModal] = useState(false);
   const [colName, setColName] = useState("");
   const [colWip, setColWip] = useState("");
   const [savingCol, setSavingCol] = useState(false);
+  const [editingColumn, setEditingColumn] = useState(null);
+  const [deletingColumn, setDeletingColumn] = useState(null);
 
   // Criação / edição de raias
   const [showSwimModal, setShowSwimModal] = useState(false);
@@ -836,6 +838,40 @@ function BoardPage({ board: initialBoard, project, onBack }) {
       toast("Coluna criada!");
       setShowColModal(false);
       setColName(""); setColWip("");
+      load();
+    } catch (e) { toast(e.message, "error"); }
+    setSavingCol(false);
+  };
+
+  const updateColumn = async () => {
+    if (!editingColumn) return;
+    setSavingCol(true);
+    try {
+      await api(
+        "PATCH",
+        `/columns/${editingColumn.id}`,
+        {
+          name: colName,
+          wipLimit: colWip === "" ? null : parseInt(colWip, 10),
+        },
+        token
+      );
+      toast("Coluna atualizada!");
+      setEditingColumn(null);
+      setColName("");
+      setColWip("");
+      load();
+    } catch (e) { toast(e.message, "error"); }
+    setSavingCol(false);
+  };
+
+  const removeColumn = async () => {
+    if (!deletingColumn) return;
+    setSavingCol(true);
+    try {
+      await api("DELETE", `/columns/${deletingColumn.id}`, null, token);
+      toast("Coluna removida.");
+      setDeletingColumn(null);
       load();
     } catch (e) { toast(e.message, "error"); }
     setSavingCol(false);
@@ -1109,10 +1145,22 @@ const renderCard = (card, col) => (
                       fontSize: 11, fontWeight: 700, padding: "2px 8px"
                     }}>{col.cards.length}{col.wipLimit ? `/${col.wipLimit}` : ""}</span>
                   </div>
-                  <button onClick={() => { setAddingCard({ columnId: col.id, swimlaneId: null }); setNewCardName(""); }}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", padding: 2 }}>
-                    <Icon.Plus />
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <button onClick={() => { setEditingColumn(col); setColName(col.name); setColWip(col.wipLimit ?? ""); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", padding: 2 }}
+                      title="Editar coluna">
+                      <Icon.Edit />
+                    </button>
+                    <button onClick={() => setDeletingColumn(col)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 2 }}
+                      title="Excluir coluna">
+                      <Icon.Trash />
+                    </button>
+                    <button onClick={() => { setAddingCard({ columnId: col.id, swimlaneId: null }); setNewCardName(""); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", padding: 2 }}>
+                      <Icon.Plus />
+                    </button>
+                  </div>
                 </div>
                 <div style={{
                   background: "#eff2fb", borderRadius: "0 0 12px 12px",
@@ -1135,11 +1183,25 @@ const renderCard = (card, col) => (
                   padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
                   borderBottom: "2px solid #6366f1"
                 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: "#111" }}>{col.name}</span>
-                  <span style={{
-                    background: "#ede9fe", color: "#6366f1", borderRadius: 99,
-                    fontSize: 11, fontWeight: 700, padding: "2px 8px"
-                  }}>{col.cards.length}{col.wipLimit ? `/${col.wipLimit}` : ""}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: "#111" }}>{col.name}</span>
+                    <span style={{
+                      background: "#ede9fe", color: "#6366f1", borderRadius: 99,
+                      fontSize: 11, fontWeight: 700, padding: "2px 8px"
+                    }}>{col.cards.length}{col.wipLimit ? `/${col.wipLimit}` : ""}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <button onClick={() => { setEditingColumn(col); setColName(col.name); setColWip(col.wipLimit ?? ""); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", padding: 2 }}
+                      title="Editar coluna">
+                      <Icon.Edit />
+                    </button>
+                    <button onClick={() => setDeletingColumn(col)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 2 }}
+                      title="Excluir coluna">
+                      <Icon.Trash />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1210,6 +1272,41 @@ const renderCard = (card, col) => (
             <Btn variant="secondary" onClick={() => setShowColModal(false)}>Cancelar</Btn>
             <Btn onClick={createColumn} disabled={savingCol || !colName.trim()}>
               {savingCol ? "Criando..." : "Criar Coluna"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Column edit modal */}
+      {editingColumn && (
+        <Modal title="Editar Coluna" onClose={() => setEditingColumn(null)}>
+          <Field label="Nome da coluna">
+            <Input value={colName} onChange={e => setColName(e.target.value)} autoFocus
+              onKeyDown={e => e.key === "Enter" && updateColumn()} />
+          </Field>
+          <Field label="WIP Limit (opcional)">
+            <Input type="number" placeholder="Ex: 5" value={colWip}
+              onChange={e => setColWip(e.target.value)} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setEditingColumn(null)}>Cancelar</Btn>
+            <Btn onClick={updateColumn} disabled={savingCol || !colName.trim()}>
+              {savingCol ? "Salvando..." : "Salvar"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Column delete modal */}
+      {deletingColumn && (
+        <Modal title="Excluir Coluna" onClose={() => setDeletingColumn(null)}>
+          <p style={{ fontSize: 14, color: "#444", lineHeight: 1.6, marginBottom: 20 }}>
+            Excluir a coluna <strong>{deletingColumn.name}</strong>? Só é possível remover colunas sem cartões.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setDeletingColumn(null)}>Cancelar</Btn>
+            <Btn variant="danger" onClick={removeColumn} disabled={savingCol}>
+              {savingCol ? "Excluindo..." : "Excluir Coluna"}
             </Btn>
           </div>
         </Modal>
