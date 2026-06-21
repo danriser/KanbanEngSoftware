@@ -67,6 +67,15 @@ const createColumnSchema = z.object({
   wipLimit: z.number().int().nullable().optional(), // Limite de trabalho em progresso, opcional e pode ser nulo
 });
 
+const updateColumnSchema = z.object({
+  name: z.string().min(1, 'O nome da coluna é obrigatório').optional(),
+  wipLimit: z.number().int().nullable().optional(),
+});
+
+const columnParamSchema = z.object({
+  id: z.string().uuid('ID da coluna inválido'),
+});
+
 router.post('/columns', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = req.userId as string;
@@ -99,6 +108,104 @@ router.post('/columns', authMiddleware, async (req: Request, res: Response): Pro
   }
 });
 
+router.patch('/columns/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: columnId } = columnParamSchema.parse(req.params);
+    const { name, wipLimit } = updateColumnSchema.parse(req.body);
+
+    if (name === undefined && wipLimit === undefined) {
+      res.status(400).json({ error: 'Informe ao menos um campo para atualizar.' });
+      return;
+    }
+
+    const column = await prisma.column.findUnique({
+      where: { id: columnId },
+      include: { board: { include: { project: true } } }
+    });
+
+    if (!column) {
+      res.status(404).json({ error: 'Coluna não encontrada.' });
+      return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({
+      where: {
+        projectId: column.board.projectId,
+        userId,
+      },
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Você não pertence a este projeto.' });
+      return;
+    }
+
+    const updatedColumn = await prisma.column.update({
+      where: { id: columnId },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(wipLimit !== undefined && { wipLimit }),
+      },
+    });
+
+    res.status(200).json({
+      message: 'Coluna atualizada com sucesso.',
+      column: updatedColumn,
+    });
+  } catch (error) {
+    console.error('[Erro na Atualização da Coluna]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+router.delete('/columns/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: columnId } = columnParamSchema.parse(req.params);
+
+    const column = await prisma.column.findUnique({
+      where: { id: columnId },
+      include: {
+        board: { include: { project: true } },
+        cards: true,
+      },
+    });
+
+    if (!column) {
+      res.status(404).json({ error: 'Coluna não encontrada.' });
+      return;
+    }
+
+    const isMember = await prisma.projectMember.findFirst({
+      where: {
+        projectId: column.board.projectId,
+        userId,
+      },
+    });
+
+    if (!isMember) {
+      res.status(403).json({ error: 'Acesso negado: Você não pertence a este projeto.' });
+      return;
+    }
+
+    if (column.cards.length > 0) {
+      res.status(400).json({
+        error: 'Não é possível excluir a coluna enquanto houver cartões nela.',
+      });
+      return;
+    }
+
+    await prisma.column.delete({ where: { id: columnId } });
+
+    res.status(200).json({ message: 'Coluna excluída com sucesso.' });
+  } catch (error) {
+    console.error('[Erro na Exclusão da Coluna]:', error);
+    if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues }); return; }
+    res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
 
 router.post('/users', async (req: Request, res: Response): Promise<void> => {
   try {
