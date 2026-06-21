@@ -261,27 +261,58 @@ function ProjectsPage({ onSelectProject }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingProject, setEditingProject] = useState(null);
+  const [deletingProject, setDeletingProject] = useState(null);
   const [form, setForm] = useState({ name: "", description: "" });
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
     setLoading(true);
     try {
+      // Repare que aqui é a rota geral de /projects
       const data = await api("GET", "/projects", null, token);
-      setProjects(data.projects);
+      setProjects(data.projects || data); // Já coloquei uma trava de segurança aqui também
     } catch (e) { toast(e.message, "error"); }
     setLoading(false);
   }, [token]);
-
   useEffect(() => { load(); }, [load]);
 
-  const create = async () => {
+ const create = async () => {
     setSaving(true);
     try {
-      await api("POST", "/projects", form, token);
-      toast("Projeto criado!");
+      // Repare na rota aqui: é /boards mesmo ou deveria ser /projects/${project.id}/boards?
+      const resposta = await api("POST", "/boards", { name: boardName, projectId: project.id }, token);
+      console.log("✅ DADOS DO POST (Criação):", resposta); // O Espião da criação
+      
+      toast("Quadro criado!");
       setShowModal(false);
+      setBoardName("");
+      load();
+    } catch (e) { 
+      console.error("❌ ERRO NO CREATE:", e);
+      toast(e.message, "error"); 
+    }
+    setSaving(false);
+  };
+
+  const update = async () => {
+    setSaving(true);
+    try {
+      await api("PUT", `/projects/${editingProject.id}`, form, token);
+      toast("Projeto atualizado!");
+      setEditingProject(null);
       setForm({ name: "", description: "" });
+      load();
+    } catch (e) { toast(e.message, "error"); }
+    setSaving(false);
+  };
+
+  const removeProject = async () => {
+    setSaving(true);
+    try {
+      await api("DELETE", `/projects/${deletingProject.id}`, null, token);
+      toast("Projeto excluído.");
+      setDeletingProject(null);
       load();
     } catch (e) { toast(e.message, "error"); }
     setSaving(false);
@@ -312,7 +343,7 @@ function ProjectsPage({ onSelectProject }) {
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#111" }}>Meus Projetos</h1>
             <p style={{ margin: "4px 0 0", color: "#888", fontSize: 14 }}>{projects.length} projeto{projects.length !== 1 ? "s" : ""}</p>
           </div>
-          <Btn onClick={() => setShowModal(true)}><Icon.Plus /> Novo Projeto</Btn>
+          <Btn onClick={() => { setForm({ name: "", description: "" }); setShowModal(true); }}><Icon.Plus /> Novo Projeto</Btn>
         </div>
 
         {loading ? (
@@ -343,7 +374,21 @@ function ProjectsPage({ onSelectProject }) {
                 }}>
                   <Icon.Board />
                 </div>
-                <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 700, color: "#111" }}>{p.name}</h3>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 700, color: "#111" }}>{p.name}</h3>
+                  <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => { setEditingProject(p); setForm({ name: p.name, description: p.description || "" }); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", padding: 4 }}
+                      title="Editar projeto">
+                      <Icon.Edit />
+                    </button>
+                    <button onClick={() => setDeletingProject(p)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#f3aaaa", padding: 4 }}
+                      title="Excluir projeto">
+                      <Icon.Trash />
+                    </button>
+                  </div>
+                </div>
                 {p.description && <p style={{ margin: 0, fontSize: 13, color: "#888", lineHeight: 1.5 }}>{p.description}</p>}
                 <p style={{ margin: "12px 0 0", fontSize: 11, color: "#bbb" }}>
                   {new Date(p.createdAt).toLocaleDateString("pt-BR")}
@@ -372,6 +417,38 @@ function ProjectsPage({ onSelectProject }) {
           </div>
         </Modal>
       )}
+
+      {editingProject && (
+        <Modal title="Editar Projeto" onClose={() => setEditingProject(null)}>
+          <Field label="Nome do projeto">
+            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+          </Field>
+          <Field label="Descrição (opcional)">
+            <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setEditingProject(null)}>Cancelar</Btn>
+            <Btn onClick={update} disabled={saving || !form.name.trim()}>
+              {saving ? "Salvando..." : "Salvar Alterações"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {deletingProject && (
+        <Modal title="Excluir Projeto" onClose={() => setDeletingProject(null)}>
+          <p style={{ fontSize: 14, color: "#444", lineHeight: 1.6, marginBottom: 20 }}>
+            Tem certeza que deseja excluir <strong>{deletingProject.name}</strong>? Essa ação remove
+            permanentemente todos os quadros, colunas, raias e cartões deste projeto.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setDeletingProject(null)}>Cancelar</Btn>
+            <Btn variant="danger" onClick={removeProject} disabled={saving}>
+              {saving ? "Excluindo..." : "Excluir Projeto"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -384,34 +461,56 @@ function ProjectPage({ project, onBack, onSelectBoard }) {
   const [showModal, setShowModal] = useState(false);
   const [boardName, setBoardName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [debugData, setDebugData] = useState("Aguardando backend...");
 
-  const load = useCallback(async () => {
+const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Carrega todos os projetos e filtra os quadros.
-      // Precisamos de GET /boards/:id, mas não existe endpoint de listagem.
-      // Mantemos os IDs dos quadros no estado local após a criação.
-      // Por enquanto exibimos apenas os quadros criados.
-      setLoading(false);
-    } catch (e) { toast(e.message, "error"); setLoading(false); }
+      const data = await api("GET", `/projects/${project.id}/boards`, null, token);
+      
+      // Limpamos a lógica de captura de dados para ficar apenas a atribuição
+      let listaQuadros = [];
+      if (Array.isArray(data)) listaQuadros = data;
+      else if (data.boards && Array.isArray(data.boards)) listaQuadros = data.boards;
+      else if (data.project && Array.isArray(data.project.boards)) listaQuadros = data.project.boards;
+      else if (data.data && Array.isArray(data.data)) listaQuadros = data.data;
+      
+      setBoards(listaQuadros);
+    } catch (e) { 
+      // Apenas o toast de erro, sem o alert invasivo
+      toast(e.message, "error"); 
+    }
+    setLoading(false);
   }, [token, project]);
-
-  useEffect(() => { load(); }, [load]);
 
   const create = async () => {
     setSaving(true);
     try {
-      const data = await api("POST", "/boards", { name: boardName, projectId: project.id }, token);
+      // 1. Manda o backend salvar no banco
+      const res = await api("POST", "/boards", { name: boardName, projectId: project.id }, token);
+      
       toast("Quadro criado!");
-      setBoards(b => [...b, data.board]);
       setShowModal(false);
       setBoardName("");
+      
+      // 2. INJEÇÃO DE FORÇA BRUTA: Pega a resposta de sucesso e ejeta direto na tela, ignorando o GET
+      const quadroCriado = res.board || res.data || res;
+      setBoards(quadrosAntigos => [...(quadrosAntigos || []), quadroCriado]);
+      
     } catch (e) { toast(e.message, "error"); }
     setSaving(false);
   };
 
+
+  
+  useEffect(() => {
+    load();
+  }, [load]);
+  
   return (
+    
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
+
       <div style={{
         background: "#fff", borderBottom: "1px solid #e8eaf0", padding: "0 32px",
         display: "flex", alignItems: "center", gap: 12, height: 60
@@ -432,7 +531,7 @@ function ProjectPage({ project, onBack, onSelectBoard }) {
           <Btn onClick={() => setShowModal(true)}><Icon.Plus /> Novo Quadro</Btn>
         </div>
 
-        {boards.length === 0 ? (
+    {(!boards || boards.length === 0) ? (
           <div style={{
             textAlign: "center", padding: "80px 0", color: "#aaa",
             background: "#fff", borderRadius: 16, border: "1.5px dashed #e2e8f0"
@@ -606,20 +705,41 @@ function BoardPage({ board: initialBoard, project, onBack }) {
   const [colWip, setColWip] = useState("");
   const [savingCol, setSavingCol] = useState(false);
 
-  // Criação de cartões por coluna
-  const [addingCard, setAddingCard] = useState(null); // columnId
+  // Criação / edição de raias
+  const [showSwimModal, setShowSwimModal] = useState(false);
+  const [swimName, setSwimName] = useState("");
+  const [savingSwim, setSavingSwim] = useState(false);
+  const [editingSwim, setEditingSwim] = useState(null); // swimlane object
+  const [deletingSwim, setDeletingSwim] = useState(null);
+
+  // Criação de cartões por (coluna, raia)
+  const [addingCard, setAddingCard] = useState(null); // { columnId, swimlaneId }
   const [newCardName, setNewCardName] = useState("");
   const [savingCard, setSavingCard] = useState(false);
 
-  const load = useCallback(async () => {
+ const load = useCallback(async () => {
     try {
       const data = await api("GET", `/boards/${initialBoard.id}`, null, token);
-      setBoard(data.board);
-    } catch (e) { toast(e.message, "error"); }
+      
+      // 1. Rede de arrastão: Pega o quadro não importa como o backend devolva
+      const boardCarregado = data.board || data.data || data;
+
+      // DEBUG: Vamos ver o que o backend está realmente entregando
+      console.log("🚨 [DEBUG] Quadro carregado do banco:", boardCarregado);
+
+      // 2. Prevenção de Amnésia: Se o backend devolver o quadro sem o array de swimlanes, 
+      // nós criamos um array vazio para não quebrar a tela do React.
+      if (!boardCarregado.swimlanes) {
+        boardCarregado.swimlanes = [];
+        console.warn("⚠️ O backend não enviou as raias (swimlanes) na resposta do GET!");
+      }
+
+      setBoard(boardCarregado);
+    } catch (e) { 
+      toast(e.message, "error"); 
+    }
     setLoading(false);
   }, [initialBoard.id, token]);
-
-  useEffect(() => { load(); }, [load]);
 
   const createColumn = async () => {
     setSavingCol(true);
@@ -639,27 +759,171 @@ function BoardPage({ board: initialBoard, project, onBack }) {
     setSavingCol(false);
   };
 
-  const createCard = async (columnId) => {
+const createSwimlane = async () => {
+    setSavingSwim(true);
+    try {
+      const nextOrder = board && board.swimlanes ? board.swimlanes.length : 0;
+      
+      const res = await api("POST", "/swimlanes", {
+        name: swimName,
+        boardId: initialBoard.id,
+        order: nextOrder,
+      }, token);
+
+      // --- DEBUG: VAMOS VER O QUE O SERVIDOR RESPONDEU ---
+      console.log("Resposta do servidor ao criar raia:", res);
+      // ---------------------------------------------------
+
+      toast("Raia criada!");
+      setShowSwimModal(false);
+      setSwimName("");
+
+      // Se a resposta for o objeto da raia, ele deve ter um campo 'name'
+      // Se o 'res' for { id: 1, ... }, ótimo. Se for { lane: { id: 1, name: '...' } }, precisamos ajustar.
+      const novaRaia = res.lane || res.data || res;
+      
+      // VERIFICAÇÃO DE SEGURANÇA: Se não veio o nome, forçamos o que o usuário digitou
+      if (!novaRaia.name) {
+        novaRaia.name = swimName; 
+      }
+
+      setBoard(prevBoard => ({
+        ...prevBoard,
+        swimlanes: [...(prevBoard.swimlanes || []), novaRaia]
+      }));
+
+    } catch (e) { 
+      toast(e.message, "error"); 
+    }
+    setSavingSwim(false);
+  };
+
+  const updateSwimlane = async () => {
+    setSavingSwim(true);
+    try {
+      await api("PUT", `/swimlanes/${editingSwim.id}`, { name: swimName }, token);
+      toast("Raia atualizada!");
+      setEditingSwim(null);
+      setSwimName("");
+      load();
+    } catch (e) { toast(e.message, "error"); }
+    setSavingSwim(false);
+  };
+
+  const removeSwimlane = async () => {
+    setSavingSwim(true);
+    try {
+      await api("DELETE", `/swimlanes/${deletingSwim.id}`, null, token);
+      toast("Raia removida.");
+      setDeletingSwim(null);
+      load();
+    } catch (e) { toast(e.message, "error"); }
+    setSavingSwim(false);
+  };
+
+  const createCard = async (columnId, swimlaneId) => {
     if (!newCardName.trim()) return;
     setSavingCard(true);
     try {
-      await api("POST", "/cards", { name: newCardName, columnId, projectId: project.id }, token);
+      const card = await api("POST", "/cards", { name: newCardName, columnId, projectId: project.id }, token);
+      // Se a raia não for a "padrão" (sem raia), move o cartão para a raia certa
+      if (swimlaneId) {
+        await api("PATCH", `/cards/${card.card.id}/move`, { columnId, swimlaneId }, token);
+      }
       setNewCardName(""); setAddingCard(null);
       load();
     } catch (e) { toast(e.message, "error"); }
     setSavingCard(false);
   };
 
-  const moveCard = async (cardId, fromColumnId, toColumnId) => {
-    if (fromColumnId === toColumnId) return;
+  const moveCard = async (cardId, fromColumnId, toColumnId, toSwimlaneId) => {
     try {
-      await api("PATCH", `/cards/${cardId}/move`, { columnId: toColumnId }, token);
+      await api("PATCH", `/cards/${cardId}/move`, { columnId: toColumnId, swimlaneId: toSwimlaneId ?? null }, token);
       load();
     } catch (e) { toast(e.message, "error"); }
   };
 
   // Estado do arrastar e soltar (drag-and-drop)
   const [dragging, setDragging] = useState(null); // { cardId, fromColumnId }
+
+  const renderCard = (card, col) => (
+    <div key={card.id}
+      draggable
+      onDragStart={() => setDragging({ cardId: card.id, fromColumnId: col.id })}
+      onDragEnd={() => setDragging(null)}
+      onClick={() => setSelectedCard({ card, columns: board.columns })}
+      style={{
+        background: "#fff", borderRadius: 10, padding: "12px 14px",
+        cursor: "grab", boxShadow: "0 1px 4px #0001",
+        border: "1.5px solid #e8eaf0", transition: "box-shadow .12s"
+      }}
+      onMouseOver={e => e.currentTarget.style.boxShadow = "0 4px 12px #6366f122"}
+      onMouseOut={e => e.currentTarget.style.boxShadow = "0 1px 4px #0001"}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: "#111", lineHeight: 1.4 }}>{card.name}</span>
+        <span style={{ color: "#bbb", flexShrink: 0 }}><Icon.Edit /></span>
+      </div>
+      {card.description && (
+        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888", lineHeight: 1.5 }}>
+          {card.description.length > 80 ? card.description.slice(0, 80) + "…" : card.description}
+        </p>
+      )}
+      <div style={{ marginTop: 10 }}>
+        <PriorityBadge priority={card.priority} />
+      </div>
+    </div>
+  );
+
+  const renderAddCard = (col, swimlaneId) => {
+    const key = `${col.id}::${swimlaneId || "none"}`;
+    const isAdding = addingCard && addingCard.columnId === col.id && addingCard.swimlaneId === swimlaneId;
+    return isAdding ? (
+      <div key={key} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1.5px solid #c7d2fe" }}>
+        <Input placeholder="Nome do cartão..." value={newCardName}
+          onChange={e => setNewCardName(e.target.value)} autoFocus
+          onKeyDown={e => { if (e.key === "Enter") createCard(col.id, swimlaneId); if (e.key === "Escape") setAddingCard(null); }} />
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <Btn size="sm" onClick={() => createCard(col.id, swimlaneId)} disabled={savingCard || !newCardName.trim()}>
+            {savingCard ? "..." : "Adicionar"}
+          </Btn>
+          <Btn size="sm" variant="secondary" onClick={() => setAddingCard(null)}>Cancelar</Btn>
+        </div>
+      </div>
+    ) : (
+      <button key={key} onClick={() => { setAddingCard({ columnId: col.id, swimlaneId }); setNewCardName(""); }}
+        style={{
+          background: "none", border: "1.5px dashed #c7d2fe", borderRadius: 10,
+          padding: "8px", cursor: "pointer", color: "#a5b4fc", fontSize: 13,
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 4
+        }}>
+        <Icon.Plus /> Adicionar cartão
+      </button>
+    );
+  };
+
+  const hasSwimlanes = board && board.swimlanes && board.swimlanes.length > 0;
+
+  // Linhas a renderizar: raias reais + uma linha "Sem raia" se houver cartões sem swimlaneId
+  const cardsWithoutSwimlane = board
+    ? board.columns.some(c => c.cards.some(card => !card.swimlaneId))
+    : false;
+
+  const rows = hasSwimlanes
+    ? [
+        ...board.swimlanes.map(s => ({ id: s.id, name: s.name, isSwimlane: true })),
+        // Agora ele só vai incluir "Sem raia" se a lista de cartões órfãos não estiver vazia
+        ...(cardsWithoutSwimlane && cardsWithoutSwimlane.length > 0 ? [{ id: null, name: "Sem raia", isSwimlane: false }] : [])
+      ]
+    : [];
+
+
+    // O GATILHO DAS RAIAS: Sincroniza o componente com o banco de dados ao entrar na tela
+  useEffect(() => {
+    if (initialBoard?.id || board?.id) {
+      load();
+    }
+  }, [initialBoard?.id, board?.id, load]);
+
 
   return (
     <div style={{ minHeight: "100vh", background: "#f0f4ff", display: "flex", flexDirection: "column" }}>
@@ -677,33 +941,34 @@ function BoardPage({ board: initialBoard, project, onBack }) {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={() => setShowMetrics(true)}><Icon.Chart /> Métricas</Btn>
+          <Btn variant="ghost" size="sm" onClick={() => { setSwimName(""); setShowSwimModal(true); }}><Icon.Plus /> Raia</Btn>
           <Btn size="sm" onClick={() => setShowColModal(true)}><Icon.Plus /> Coluna</Btn>
         </div>
       </div>
 
       {/* Board canvas */}
-      <div style={{ flex: 1, overflow: "auto", padding: "24px", display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: "24px" }}>
         {loading ? (
-          <div style={{ color: "#aaa", margin: "auto" }}>Carregando quadro...</div>
+          <div style={{ color: "#aaa", textAlign: "center", marginTop: 80 }}>Carregando quadro...</div>
         ) : !board || board.columns.length === 0 ? (
           <div style={{
-            margin: "auto", textAlign: "center", color: "#aaa", background: "#fff",
-            borderRadius: 16, padding: "60px 40px", border: "1.5px dashed #c7d2fe"
+            margin: "80px auto", textAlign: "center", color: "#aaa", background: "#fff",
+            borderRadius: 16, padding: "60px 40px", border: "1.5px dashed #c7d2fe", maxWidth: 420
           }}>
             <p style={{ fontSize: 16, marginBottom: 16 }}>Sem colunas ainda.</p>
             <Btn onClick={() => setShowColModal(true)}><Icon.Plus /> Adicionar primeira coluna</Btn>
           </div>
-        ) : (
-          <>
+        ) : !hasSwimlanes ? (
+          // ─── SEM RAIAS: layout simples de colunas ───
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
             {board.columns.map(col => (
               <div key={col.id}
-                style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 0 }}
+                style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column" }}
                 onDragOver={e => e.preventDefault()}
                 onDrop={e => {
                   e.preventDefault();
-                  if (dragging) moveCard(dragging.cardId, dragging.fromColumnId, col.id);
+                  if (dragging) moveCard(dragging.cardId, dragging.fromColumnId, col.id, null);
                 }}>
-                {/* Column header */}
                 <div style={{
                   background: "#fff", borderRadius: "12px 12px 0 0", padding: "14px 16px",
                   display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -716,72 +981,89 @@ function BoardPage({ board: initialBoard, project, onBack }) {
                       fontSize: 11, fontWeight: 700, padding: "2px 8px"
                     }}>{col.cards.length}{col.wipLimit ? `/${col.wipLimit}` : ""}</span>
                   </div>
-                  <button onClick={() => { setAddingCard(col.id); setNewCardName(""); }}
+                  <button onClick={() => { setAddingCard({ columnId: col.id, swimlaneId: null }); setNewCardName(""); }}
                     style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", padding: 2 }}>
                     <Icon.Plus />
                   </button>
                 </div>
-
-                {/* Cards */}
                 <div style={{
                   background: "#eff2fb", borderRadius: "0 0 12px 12px",
                   minHeight: 80, padding: "8px 8px", display: "flex", flexDirection: "column", gap: 8
                 }}>
-                  {col.cards.map(card => (
-                    <div key={card.id}
-                      draggable
-                      onDragStart={() => setDragging({ cardId: card.id, fromColumnId: col.id })}
-                      onDragEnd={() => setDragging(null)}
-                      onClick={() => setSelectedCard({ card, columns: board.columns })}
-                      style={{
-                        background: "#fff", borderRadius: 10, padding: "12px 14px",
-                        cursor: "grab", boxShadow: "0 1px 4px #0001",
-                        border: "1.5px solid #e8eaf0", transition: "box-shadow .12s"
-                      }}
-                      onMouseOver={e => e.currentTarget.style.boxShadow = "0 4px 12px #6366f122"}
-                      onMouseOut={e => e.currentTarget.style.boxShadow = "0 1px 4px #0001"}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: "#111", lineHeight: 1.4 }}>{card.name}</span>
-                        <span style={{ color: "#bbb", flexShrink: 0 }}><Icon.Edit /></span>
-                      </div>
-                      {card.description && (
-                        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888", lineHeight: 1.5 }}>
-                          {card.description.length > 80 ? card.description.slice(0, 80) + "…" : card.description}
-                        </p>
-                      )}
-                      <div style={{ marginTop: 10 }}>
-                        <PriorityBadge priority={card.priority} />
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Inline card creation */}
-                  {addingCard === col.id ? (
-                    <div style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1.5px solid #c7d2fe" }}>
-                      <Input placeholder="Nome do cartão..." value={newCardName}
-                        onChange={e => setNewCardName(e.target.value)} autoFocus
-                        onKeyDown={e => { if (e.key === "Enter") createCard(col.id); if (e.key === "Escape") setAddingCard(null); }} />
-                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                        <Btn size="sm" onClick={() => createCard(col.id)} disabled={savingCard || !newCardName.trim()}>
-                          {savingCard ? "..." : "Adicionar"}
-                        </Btn>
-                        <Btn size="sm" variant="secondary" onClick={() => setAddingCard(null)}>Cancelar</Btn>
-                      </div>
-                    </div>
-                  ) : (
-                    <button onClick={() => { setAddingCard(col.id); setNewCardName(""); }}
-                      style={{
-                        background: "none", border: "1.5px dashed #c7d2fe", borderRadius: 10,
-                        padding: "8px", cursor: "pointer", color: "#a5b4fc", fontSize: 13,
-                        width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 4
-                      }}>
-                      <Icon.Plus /> Adicionar cartão
-                    </button>
-                  )}
+                  {col.cards.map(card => renderCard(card, col))}
+                  {renderAddCard(col, null)}
                 </div>
               </div>
             ))}
-          </>
+          </div>
+        ) : (
+          // ─── COM RAIAS: grade de raias × colunas ───
+          <div style={{ minWidth: "fit-content" }}>
+            {/* Cabeçalho de colunas */}
+            <div style={{ display: "flex", gap: 16, marginBottom: 8, paddingLeft: 176 }}>
+              {board.columns.map(col => (
+                <div key={col.id} style={{
+                  width: 280, flexShrink: 0, background: "#fff", borderRadius: 10,
+                  padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
+                  borderBottom: "2px solid #6366f1"
+                }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: "#111" }}>{col.name}</span>
+                  <span style={{
+                    background: "#ede9fe", color: "#6366f1", borderRadius: 99,
+                    fontSize: 11, fontWeight: 700, padding: "2px 8px"
+                  }}>{col.cards.length}{col.wipLimit ? `/${col.wipLimit}` : ""}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Linhas de raias */}
+            {rows.map(row => (
+              <div key={row.id || "none"} style={{ display: "flex", gap: 16, marginBottom: 12 }}>
+                {/* Label da raia */}
+                <div style={{
+                  width: 160, flexShrink: 0, background: row.isSwimlane ? "#dbe4ff" : "#e7e9ee",
+                  borderRadius: 10, padding: "14px 12px", display: "flex", flexDirection: "column",
+                  justifyContent: "center", gap: 6
+                }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: "#3730a3", lineHeight: 1.3 }}>{row.name}</span>
+                  {row.isSwimlane && (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => { setEditingSwim(row); setSwimName(row.name); }}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1aa", padding: 2 }}
+                        title="Editar raia">
+                        <Icon.Edit />
+                      </button>
+                      <button onClick={() => setDeletingSwim(row)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#ef444499", padding: 2 }}
+                        title="Excluir raia">
+                        <Icon.Trash />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Células da raia (uma por coluna) */}
+                {board.columns.map(col => {
+                  const cellCards = col.cards.filter(c => (c.swimlaneId || null) === (row.id || null));
+                  return (
+                    <div key={col.id}
+                      style={{
+                        width: 280, flexShrink: 0, background: "#eff2fb", borderRadius: 10,
+                        padding: "8px", minHeight: 90, display: "flex", flexDirection: "column", gap: 8
+                      }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => {
+                        e.preventDefault();
+                        if (dragging) moveCard(dragging.cardId, dragging.fromColumnId, col.id, row.id);
+                      }}>
+                      {cellCards.map(card => renderCard(card, col))}
+                      {renderAddCard(col, row.id)}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -800,6 +1082,54 @@ function BoardPage({ board: initialBoard, project, onBack }) {
             <Btn variant="secondary" onClick={() => setShowColModal(false)}>Cancelar</Btn>
             <Btn onClick={createColumn} disabled={savingCol || !colName.trim()}>
               {savingCol ? "Criando..." : "Criar Coluna"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Swimlane create modal */}
+      {showSwimModal && (
+        <Modal title="Nova Raia" onClose={() => setShowSwimModal(false)}>
+          <Field label="Nome da raia">
+            <Input placeholder="Ex: Equipe Backend, Bugs, Chuck..." value={swimName}
+              onChange={e => setSwimName(e.target.value)} autoFocus
+              onKeyDown={e => e.key === "Enter" && createSwimlane()} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setShowSwimModal(false)}>Cancelar</Btn>
+            <Btn onClick={createSwimlane} disabled={savingSwim || !swimName.trim()}>
+              {savingSwim ? "Criando..." : "Criar Raia"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Swimlane edit modal */}
+      {editingSwim && (
+        <Modal title="Editar Raia" onClose={() => setEditingSwim(null)}>
+          <Field label="Nome da raia">
+            <Input value={swimName} onChange={e => setSwimName(e.target.value)} autoFocus
+              onKeyDown={e => e.key === "Enter" && updateSwimlane()} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setEditingSwim(null)}>Cancelar</Btn>
+            <Btn onClick={updateSwimlane} disabled={savingSwim || !swimName.trim()}>
+              {savingSwim ? "Salvando..." : "Salvar"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Swimlane delete modal */}
+      {deletingSwim && (
+        <Modal title="Excluir Raia" onClose={() => setDeletingSwim(null)}>
+          <p style={{ fontSize: 14, color: "#444", lineHeight: 1.6, marginBottom: 20 }}>
+            Excluir a raia <strong>{deletingSwim.name}</strong>? Os cartões dela passam a aparecer em "Sem raia".
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setDeletingSwim(null)}>Cancelar</Btn>
+            <Btn variant="danger" onClick={removeSwimlane} disabled={savingSwim}>
+              {savingSwim ? "Excluindo..." : "Excluir Raia"}
             </Btn>
           </div>
         </Modal>
