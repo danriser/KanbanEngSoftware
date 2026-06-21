@@ -634,18 +634,32 @@ function CardModal({ card, columns, onClose, onUpdated, onDeleted }) {
   const [targetColumn, setTargetColumn] = useState(card.columnId);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [dueDate, setDueDate] = useState(card?.dueDate || "");
+  const [responsible, setResponsible] = useState(card?.responsible || "");
+
 
   const save = async () => {
     setSaving(true);
     try {
-      await api("PUT", `/cards/${card.id}`, form, token);
+      // 🚨 Juntando o que está no 'form' com as novas variáveis
+      const payload = {
+        ...form,
+        dueDate: dueDate || null,
+        responsible: responsible || null
+      };
+
+      await api("PUT", `/cards/${card.id}`, payload, token);
+      
       if (targetColumn !== card.columnId) {
         await api("PATCH", `/cards/${card.id}/move`, { columnId: targetColumn }, token);
       }
+      
       toast("Cartão atualizado!");
       onUpdated();
       onClose();
-    } catch (e) { toast(e.message, "error"); }
+    } catch (e) { 
+      toast(e.message, "error"); 
+    }
     setSaving(false);
   };
 
@@ -689,6 +703,25 @@ function CardModal({ card, columns, onClose, onUpdated, onDeleted }) {
           <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
           <Btn onClick={save} disabled={saving}>{saving ? "Salvando..." : "Salvar"}</Btn>
         </div>
+        <div style={{ display: "flex", gap: 16 }}>
+  {/* CAMPO DE DATA LIMITE */}
+  <Field label="Data Limite" style={{ flex: 1 }}>
+    <Input 
+      type="date" 
+      value={dueDate} 
+      onChange={e => setDueDate(e.target.value)} 
+    />
+  </Field>
+
+  {/* CAMPO DE RESPONSÁVEL */}
+  <Field label="Responsável" style={{ flex: 1 }}>
+    <Input 
+      placeholder="Ex: João Silva" 
+      value={responsible} 
+      onChange={e => setResponsible(e.target.value)} 
+    />
+  </Field>
+</div>
       </div>
     </Modal>
   );
@@ -746,7 +779,7 @@ function BoardPage({ board: initialBoard, project, onBack }) {
   const [selectedCard, setSelectedCard] = useState(null);
   const [showMetrics, setShowMetrics] = useState(false);
   const [boardName, setBoardName] = useState("");   
-
+ 
 
   // Criação de colunas
   const [showColModal, setShowColModal] = useState(false);
@@ -870,21 +903,32 @@ const createSwimlane = async () => {
     setSavingSwim(false);
   };
 
-  const createCard = async (columnId, swimlaneId) => {
+const createCard = async (columnId, swimlaneId) => {
     if (!newCardName.trim()) return;
     setSavingCard(true);
     try {
-      const card = await api("POST", "/cards", { name: newCardName, columnId, projectId: project.id }, token);
+      // Criação expressa: envia apenas o essencial (nome, coluna e projeto)
+      const card = await api("POST", "/cards", { 
+        name: newCardName, 
+        columnId, 
+        projectId: project.id 
+      }, token);
+      
       // Se a raia não for a "padrão" (sem raia), move o cartão para a raia certa
       if (swimlaneId) {
         await api("PATCH", `/cards/${card.card.id}/move`, { columnId, swimlaneId }, token);
       }
-      setNewCardName(""); setAddingCard(null);
+      
+      setNewCardName(""); 
+      setAddingCard(null);
       load();
-    } catch (e) { toast(e.message, "error"); }
+    } catch (e) { 
+      toast(e.message, "error"); 
+    }
     setSavingCard(false);
   };
 
+  
   const moveCard = async (cardId, fromColumnId, toColumnId, toSwimlaneId) => {
     try {
       await api("PATCH", `/cards/${cardId}/move`, { columnId: toColumnId, swimlaneId: toSwimlaneId ?? null }, token);
@@ -894,8 +938,7 @@ const createSwimlane = async () => {
 
   // Estado do arrastar e soltar (drag-and-drop)
   const [dragging, setDragging] = useState(null); // { cardId, fromColumnId }
-
-  const renderCard = (card, col) => (
+const renderCard = (card, col) => (
     <div key={card.id}
       draggable
       onDragStart={() => setDragging({ cardId: card.id, fromColumnId: col.id })}
@@ -908,17 +951,53 @@ const createSwimlane = async () => {
       }}
       onMouseOver={e => e.currentTarget.style.boxShadow = "0 4px 12px #6366f122"}
       onMouseOut={e => e.currentTarget.style.boxShadow = "0 1px 4px #0001"}>
+      
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <span style={{ fontSize: 14, fontWeight: 600, color: "#111", lineHeight: 1.4 }}>{card.name}</span>
         <span style={{ color: "#bbb", flexShrink: 0 }}><Icon.Edit /></span>
       </div>
+      
       {card.description && (
         <p style={{ margin: "6px 0 0", fontSize: 12, color: "#888", lineHeight: 1.5 }}>
           {card.description.length > 80 ? card.description.slice(0, 80) + "…" : card.description}
         </p>
       )}
-      <div style={{ marginTop: 10 }}>
-        <PriorityBadge priority={card.priority} />
+      
+      {/* ─── NOVO RODAPÉ EXECUTIVO DO CARTÃO ─── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+        
+        {/* Lado Esquerdo: Prioridade + Data Limite */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <PriorityBadge priority={card.priority} />
+          
+          {card.dueDate && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 4,
+              fontSize: 11, color: "#64748b", background: "#f1f5f9",
+              padding: "4px 8px", borderRadius: 6, fontWeight: 600
+            }}>
+
+              <span>📅</span>
+
+              {new Date(card.dueDate).toLocaleDateString("pt-BR", { timeZone: 'UTC' })}
+            </div>
+          )}
+        </div>
+
+        {/* Lado Direito: Avatar do Responsável */}
+        {card.responsible && (
+          <div 
+            style={{ 
+              width: 24, height: 24, borderRadius: "50%", 
+              background: "#e0e7ff", color: "#4f46e5", 
+              display: "flex", alignItems: "center", justifyContent: "center", 
+              fontSize: 11, fontWeight: 800, border: "1px solid #c7d2fe" 
+            }} 
+            title={card.responsible}
+          >
+            {card.responsible.charAt(0).toUpperCase()}
+          </div>
+        )}
       </div>
     </div>
   );

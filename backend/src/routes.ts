@@ -492,6 +492,9 @@ const updateCardBodySchema = z.object({
   name: z.string().min(1, 'O nome não pode ser vazio').optional(),
   description: z.string().optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional(),
+
+  dueDate: z.string().nullable().optional(),
+  responsible: z.string().nullable().optional(),
 });
 
 const cardParamSchema = z.object({
@@ -533,6 +536,15 @@ router.put('/cards/:id', authMiddleware, async (req: Request, res: Response): Pr
     if (updateData.name !== undefined) dataToUpdate.name = updateData.name;
     if (updateData.priority !== undefined) dataToUpdate.priority = updateData.priority;
     if (updateData.description !== undefined) dataToUpdate.description = updateData.description;
+
+    if (updateData.dueDate !== undefined) {
+      dataToUpdate.dueDate = updateData.dueDate ? new Date(updateData.dueDate) : null;
+    }
+    
+    if (updateData.responsible !== undefined) dataToUpdate.responsible = updateData.responsible;
+    // ...
+
+
 
     const updatedCard = await prisma.card.update({
       where: { id: cardId },

@@ -106,6 +106,7 @@ model Card {
   assigneeId  String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
+  responsible String?
 
   column      Column         @relation(fields: [columnId], references: [id])
   swimlane    Swimlane?      @relation(fields: [swimlaneId], references: [id])
