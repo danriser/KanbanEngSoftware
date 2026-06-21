@@ -355,6 +355,13 @@ router.get('/boards/:id', authMiddleware, async (req: Request, res: Response): P
         }
       },
       include: {
+
+swimlanes: {
+          orderBy: {
+            order: 'asc'
+          }
+        },
+
         columns: {
           orderBy: {
             order: 'asc' // Garante o posicionamento correto na tela (Backlog -> Em Andamento -> Concluído)
@@ -790,6 +797,116 @@ router.get('/boards/:id/metrics', authMiddleware, async (req: Request, res: Resp
   } catch (error) {
     console.error('[Erro no Motor Analítico]:', error);
     res.status(500).json({ error: 'Erro interno no servidor.' });
+  }
+});
+
+// 1. Rota para Atualizar o Projeto (Editar Nome)
+router.put('/projects/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Adicionamos o "as string" para acalmar o TypeScript
+    const idDoProjeto = req.params.id as string;
+    const { name: novoNome } = req.body;
+
+    const projetoAtualizado = await prisma.project.update({
+      where: { id: idDoProjeto },
+      data: { name: novoNome }
+    });
+
+    res.status(200).json(projetoAtualizado);
+  } catch (error) {
+    console.error('[Erro ao atualizar projeto]:', error);
+    res.status(500).json({ error: 'Erro ao atualizar o projeto.' });
+  }
+});
+
+// 2. Rota para Deletar o Projeto
+router.delete('/projects/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const idDoProjeto = req.params.id as string;
+
+    await prisma.project.delete({
+      where: { id: idDoProjeto }
+    });
+
+    res.status(200).json({ message: 'Projeto deletado com sucesso.' });
+  } catch (error) {
+    console.error('[Erro ao deletar projeto]:', error);
+    res.status(500).json({ error: 'Erro ao deletar o projeto.' });
+  }
+});
+
+// 3. Rota para Buscar os Quadros e Cartões de um Projeto Específico
+router.get('/projects/:id/boards', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const idDoProjeto = req.params.id as string;
+
+    const quadrosDoProjeto = await prisma.board.findMany({
+      where: { projectId: idDoProjeto },
+      include: { 
+        columns: { 
+          include: { cards: true } 
+        } 
+      }
+    });
+
+    res.status(200).json(quadrosDoProjeto);
+  } catch (error) {
+    console.error('[Erro ao buscar quadros do projeto]:', error);
+    res.status(500).json({ error: 'Erro ao buscar os quadros do projeto.' });
+  }
+});
+
+
+router.put('/projects/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Adicionamos o "as string" para acalmar o TypeScript
+    const idDoProjeto = req.params.id as string;
+    const { name: novoNome } = req.body;
+
+    const projetoAtualizado = await prisma.project.update({
+      where: { id: idDoProjeto },
+      data: { name: novoNome }
+    });
+
+    res.status(200).json(projetoAtualizado);
+  } catch (error) {
+    console.error('[Erro ao atualizar projeto]:', error);
+    res.status(500).json({ error: 'Erro ao atualizar o projeto.' });
+  }
+});
+
+router.delete('/projects/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const idDoProjeto = req.params.id as string;
+
+    await prisma.project.delete({
+      where: { id: idDoProjeto }
+    });
+
+    res.status(200).json({ message: 'Projeto deletado com sucesso.' });
+  } catch (error) {
+    console.error('[Erro ao deletar projeto]:', error);
+    res.status(500).json({ error: 'Erro ao deletar o projeto.' });
+  }
+});
+
+router.get('/projects/:id/boards', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const idDoProjeto = req.params.id as string;
+
+    const quadrosDoProjeto = await prisma.board.findMany({
+      where: { projectId: idDoProjeto },
+      include: { 
+        columns: { 
+          include: { cards: true } 
+        } 
+      }
+    });
+
+    res.status(200).json(quadrosDoProjeto);
+  } catch (error) {
+    console.error('[Erro ao buscar quadros do projeto]:', error);
+    res.status(500).json({ error: 'Erro ao buscar os quadros do projeto.' });
   }
 });
 
