@@ -277,17 +277,20 @@ const load = useCallback(async () => {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
- const create = async () => {
+const create = async () => {
     setSaving(true);
     try {
-      // Repare na rota aqui: é /boards mesmo ou deveria ser /projects/${project.id}/boards?
-      const resposta = await api("POST", "/boards", { name: boardName, projectId: project.id }, token);
-      console.log("✅ DADOS DO POST (Criação):", resposta); // O Espião da criação
+      // Faz o POST na rota de projetos usando os dados do 'form'
+      await api("POST", "/projects", { 
+        name: form.name, 
+        description: form.description 
+      }, token);
       
-      toast("Quadro criado!");
+      toast("Projeto criado!");
       setShowModal(false);
-      setBoardName("");
-      load();
+      setForm({ name: "", description: "" }); // Limpa os campos do modal
+      
+      load(); // Recarrega a lista de projetos do zero
     } catch (e) { 
       console.error("❌ ERRO NO CREATE:", e);
       toast(e.message, "error"); 
@@ -399,15 +402,25 @@ const load = useCallback(async () => {
         )}
       </div>
 
+ {/* Modal de Criar Projeto */}
       {showModal && (
         <Modal title="Novo Projeto" onClose={() => setShowModal(false)}>
           <Field label="Nome do projeto">
-            <Input placeholder="Ex: Site da empresa" value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+           <Input 
+  placeholder="Ex: CRM Flutter" 
+  value={form.name} 
+  onChange={e => setForm({ ...form, name: e.target.value })} 
+  autoFocus
+  // AGORA O ENTER SÓ FUNCIONA SE TIVER 2 LETRAS OU MAIS
+  onKeyDown={e => e.key === "Enter" && form.name.trim().length >= 2 && create()} 
+/>
           </Field>
           <Field label="Descrição (opcional)">
-            <Textarea placeholder="Descreva brevemente o projeto..." value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            <Input 
+              placeholder="Ex: Sistema para clientes" 
+              value={form.description} 
+              onChange={e => setForm({ ...form, description: e.target.value })} 
+            />
           </Field>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancelar</Btn>
@@ -417,7 +430,6 @@ const load = useCallback(async () => {
           </div>
         </Modal>
       )}
-
       {editingProject && (
         <Modal title="Editar Projeto" onClose={() => setEditingProject(null)}>
           <Field label="Nome do projeto">
@@ -733,6 +745,8 @@ function BoardPage({ board: initialBoard, project, onBack }) {
   const [loading, setLoading] = useState(true);
   const [selectedCard, setSelectedCard] = useState(null);
   const [showMetrics, setShowMetrics] = useState(false);
+  const [boardName, setBoardName] = useState("");   
+
 
   // Criação de colunas
   const [showColModal, setShowColModal] = useState(false);
