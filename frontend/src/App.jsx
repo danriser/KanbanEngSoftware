@@ -483,6 +483,27 @@ const load = useCallback(async () => {
     setLoading(false);
   }, [token, project]);
 
+
+const deleteBoard = async (e, boardId) => {
+    e.stopPropagation(); // Impede que o clique no botão de excluir acabe abrindo o quadro
+    
+    if (!window.confirm("Tem certeza que deseja excluir este quadro permanentemente?")) return;
+
+    try {
+      // Faz o chamado para a rota de deleção do backend
+      await api("DELETE", `/boards/${boardId}`, null, token);
+      
+      toast("Quadro excluído com sucesso!");
+      
+      // INJEÇÃO DIRETA: Remove o quadro da tela na mesma hora, sem chamar o load()
+      setBoards(boardsAntigos => boardsAntigos.filter(b => b.id !== boardId));
+      
+    } catch (e) { 
+      toast(e.message, "error"); 
+    }
+  };
+
+
   const create = async () => {
     setSaving(true);
     try {
@@ -546,10 +567,24 @@ const load = useCallback(async () => {
                 style={{
                   background: "#fff", borderRadius: 14, padding: 24,
                   border: "1.5px solid #e8eaf0", cursor: "pointer",
-                  boxShadow: "0 2px 8px #0001", transition: "all .15s"
+                  boxShadow: "0 2px 8px #0001", transition: "all .15s",
+                  position: "relative"
                 }}
                 onMouseOver={e => { e.currentTarget.style.boxShadow = "0 8px 24px #6366f115"; e.currentTarget.style.borderColor = "#c7d2fe"; }}
                 onMouseOut={e => { e.currentTarget.style.boxShadow = "0 2px 8px #0001"; e.currentTarget.style.borderColor = "#e8eaf0"; }}>
+
+                  <button 
+  onClick={(e) => deleteBoard(e, b.id)}
+  style={{ 
+    position: "absolute", top: 16, right: 16, 
+    background: "none", border: "none", cursor: "pointer", 
+    color: "#ef444499", padding: 4 
+  }}
+  title="Excluir quadro"
+>
+  <Icon.Trash size={18} />
+</button>
+
                 <div style={{ width: 36, height: 36, background: "#ede9fe", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12, color: "#6366f1" }}>
                   <Icon.Board />
                 </div>

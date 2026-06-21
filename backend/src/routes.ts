@@ -336,6 +336,58 @@ const boardParamSchema = z.object({
   id: z.string().uuid('ID do quadro inválido'),
 });
 
+
+router.delete('/boards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.userId as string;
+    const { id: boardId } = boardParamSchema.parse(req.params);
+
+    // 1. Opcional, mas recomendado: verificar se o quadro existe e se o usuário tem acesso
+    const board = await prisma.board.findFirst({
+      where: {
+        id: boardId,
+        project: { members: { some: { userId: userId } } }
+      }
+    });
+
+    if (!board) {
+      res.status(403).json({ error: 'Acesso negado ou quadro não encontrado.' });
+      return;
+    }
+
+// 2. Operação destrutiva em Cascata (Transação segura)
+    await prisma.$transaction([
+      // Passo A: Limpa os cartões
+      prisma.card.deleteMany({
+        where: { column: { boardId: boardId } }
+      }),
+      
+      // Passo B: Limpa as colunas
+      prisma.column.deleteMany({
+        where: { boardId: boardId }
+      }),
+
+      // Passo C: Limpa as raias
+      prisma.swimlane.deleteMany({
+        where: { boardId: boardId }
+      }),
+
+      // Passo D: Deleta o quadro vazio
+      prisma.board.delete({
+        where: { id: boardId }
+      })
+    ]);
+
+    // 3. Resposta JSON limpa, que vai evitar o erro de DOCTYPE no frontend
+    res.status(200).json({ status: 'sucesso', message: 'Quadro deletado com sucesso.' });
+
+  } catch (error) {
+    console.error('[Erro na Deleção do Quadro]:', error);
+    res.status(500).json({ error: 'Erro interno ao excluir o quadro.' });
+  }
+});
+
+
 // Super Rota de Leitura: Retorna o Quadro com Colunas e Cartões aninhados
 router.get('/boards/:id', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
